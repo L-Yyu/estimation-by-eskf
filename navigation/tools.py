@@ -61,3 +61,14 @@ def BuildSkewSymmetricMatrix(vector:np.array):
                                       [-vector[1][0], vector[0][0], 0]])
     return skew_symmetric_matrix
 
+def angle_diff(angle1, angle2):
+    d_angle = angle2 - angle1
+    d_angle = d_angle % 360
+    if d_angle > 180:
+        d_angle -= 360
+    elif d_angle < -180:
+        d_angle += 360
+    return d_angle
+
+if __name__=='__main__':
+    print(euler2quaternion(np.array([0, 0, 0])))

@@ -54,9 +54,15 @@ def test_path_gen():
            'accel_b_corr': np.array([100.0, 100.0, 100.0]),
            'mag_std': np.array([0.2, 0.2, 0.2]) * 1.0
           }
-    data_name = 'sim_1'
+    gps_accuracy = {'stdp': np.array([0.01, 0.01, 0.02]),
+                    'stdv': np.array([0.05, 0.05, 0.05])}
+    odo_accuracy = {'scale': 0.99,
+                    'stdv': 0.1}
+    
+    data_name = 'straight'
 
     # generate GPS data
+    #imu = imu_model.IMU(accuracy=imu_err, axis=6, gps=True, gps_opt=gps_accuracy, odo_opt=odo_accuracy, odo=True)
     imu = imu_model.IMU(accuracy=imu_err, axis=6, gps=True, odo=True)
 
     #### start simulation

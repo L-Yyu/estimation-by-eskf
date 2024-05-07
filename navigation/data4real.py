@@ -54,6 +54,27 @@ class GNSSData(object):
         print('read gnss data total: ', gnss_data_queue.qsize())
         return gnss_data_queue
     
+class ODOData(object):
+    def __init__(self, time, v_b, v_n) -> None:
+        self.odo_time = time
+        self.v_b = v_b
+        self.v_n = v_n
+    
+    @staticmethod
+    def read_odo_data(data_file)->queue.Queue:
+        odo_data_queue = queue.Queue()
+        with open(data_file, mode='r', encoding='utf-8') as f:
+            lines = f.readlines()
+            for iter, line in enumerate(tqdm(lines, desc="reading odo data")):
+                numbers = [float(num) for num in line.split()]
+                time = numbers[0]
+                v_b = np.array(numbers[1:4]).reshape(3, 1)
+                v_n = np.array(numbers[4:7]).reshape(3, 1)
+                odo_data = ODOData(time, v_b, v_n)
+                odo_data_queue.put(odo_data)
+        print('read odo data total: ', odo_data_queue.qsize())
+        return odo_data_queue
+    
 if __name__ == "__main__":
     imu1 = IMUData(1, np.array([1, 2, 3]).reshape(3, 1), np.array([4, 5, 6]).reshape(3, 1))
     imu2 = IMUData(2, np.array([2, 3, 4]).reshape(3, 1), np.array([5, 6, 7]).reshape(3, 1))

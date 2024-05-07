@@ -6,7 +6,7 @@ import os
 from tqdm import tqdm
 
 class IMUData(object):
-    def __init__(self, time, linear_acceleration, angle_vel, true_linear_acceleration, true_angle_vel,gt_quat,gt_pos_lla, odom_vel, true_vel) -> None:
+    def __init__(self, time, linear_acceleration, angle_vel, true_linear_acceleration, true_angle_vel,gt_quat,gt_pos_lla, odom_vel, true_vel, true_euler) -> None:
         self.imu_time = time
         self.imu_linear_acceleration = linear_acceleration
         self.imu_angle_vel =  angle_vel
@@ -17,7 +17,9 @@ class IMUData(object):
         self.gt_pos_lla = gt_pos_lla
 
         self.odom_vel = odom_vel
-        self.true_vel = true_vel
+        self.true_vel_n = true_vel
+        self.true_euler = true_euler
+
     @staticmethod
     def read_imu_data(data_path)->queue.Queue:
         imu_data_queue = queue.Queue()
@@ -32,6 +34,7 @@ class IMUData(object):
 
         odom_df = pd.read_csv(os.path.join(data_path,'odo-0.csv'))
         true_vel_df = pd.read_csv(os.path.join(data_path,'ref_vel.csv'))
+        true_euler_df = pd.read_csv(os.path.join(data_path,'ref_att_euler.csv'))
 
         for i in tqdm(range(len(imu_time_df)), desc="reading imu data"):
             imu_data = IMUData(imu_time_df.loc[i,'time (sec)'],
@@ -47,18 +50,20 @@ class IMUData(object):
                                np.array([true_imu_angle_vel_df.loc[i,'ref_gyro_x (deg/s)'],
                                          true_imu_angle_vel_df.loc[i,'ref_gyro_y (deg/s)'],
                                          true_imu_angle_vel_df.loc[i,'ref_gyro_z (deg/s)']]).reshape(3,1),
-                               np.array([gt_quat_df.loc[i,'q0 ()'],
-                                        gt_quat_df.loc[i,'q1'],
+                               np.array([gt_quat_df.loc[i,'q1'],
                                         gt_quat_df.loc[i,'q2'],
-                                        gt_quat_df.loc[i,'q3']]),
+                                        gt_quat_df.loc[i,'q3'],
+                                        gt_quat_df.loc[i,'q0 ()']]),
                                np.array([gt_pos_lla_df.loc[i,'ref_pos_lat (deg)'],
                                          gt_pos_lla_df.loc[i,'ref_pos_lon (deg)'],
                                          gt_pos_lla_df.loc[i,'ref_pos_alt (m)']]).reshape(3,1),
                                odom_df.loc[i,'odo (m/s)'],
                                np.array([true_vel_df.loc[i,'ref_vel_x (m/s)'],
                                          true_vel_df.loc[i,'ref_vel_y (m/s)'],
-                                         true_vel_df.loc[i,'ref_vel_z (m/s)']]).reshape(3,1)
-                                         )
+                                         true_vel_df.loc[i,'ref_vel_z (m/s)']]).reshape(3,1),
+                               np.array([true_euler_df.loc[i,'ref_Roll (deg)'],
+                                            true_euler_df.loc[i,'ref_Pitch (deg)'],
+                                            true_euler_df.loc[i,'ref_Yaw (deg)']]))
             imu_data_queue.put(imu_data)
         print('read imu data total: ',imu_data_queue.qsize())
         return imu_data_queue

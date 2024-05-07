@@ -4,9 +4,10 @@ import matplotlib.pyplot as plt
 import queue
 import os
 import yaml
-from data import IMUData, GNSSData
+from data4raw import IMUData, GNSSData
 from tools import *
 from earth import lla2ned
+from observability import ObservabilityAnalysis
 
 DIM_STATE = 15
 DIM_STATE_NOISE = 6
@@ -88,7 +89,10 @@ class ESKF(object):
         self.gnss_data_queue = GNSSData.read_gnss_data(data_path)
 
         self.last_imu_data = self.imu_data_queue.get()
-        self.curr_gnss_data = self.gnss_data_queue.get()
+        self.curr_imu_data = self.imu_data_queue.get()
+
+        self.last_gnss_data = self.gnss_data_queue.get()
+        self.curr_gnss_data = self.gnss_data_queue.get() # 从0.1s开始
 
         # self.velocity_= np.array([[0], [0], [0]])
         self.velocity_ = self.curr_gnss_data.true_velocity
@@ -100,7 +104,6 @@ class ESKF(object):
         # self.pos_ = lla2ned(self.curr_gnss_data.position_lla, self.ref_pos_lla)
 
     def Predict(self):
-        self.curr_imu_data = self.imu_data_queue.get()
         curr_imu_data = self.curr_imu_data
         last_imu_data = self.last_imu_data
         delta_t = curr_imu_data.imu_time - last_imu_data.imu_time
@@ -130,10 +133,10 @@ class ESKF(object):
         self.velocity_ = curr_vel
 
         # 位置更新
-        # self.pos_ = self.pos_ + 0.5 * delta_t * (curr_vel + last_vel) + \
-        #     0.25 * (curr_imu_data.imu_linear_acceleration+last_imu_data.imu_linear_acceleration) * delta_t * delta_t
-        self.pos_ = self.pos_ + 0.5 * delta_t * (curr_vel + last_vel) + 0.25 * (unbias_accel_0 + unbias_accel_1) * delta_t * delta_t
-        self.last_imu_data = curr_imu_data
+        self.pos_ = self.pos_ + 0.5 * delta_t * (curr_vel + last_vel) + \
+            0.25 * (curr_imu_data.imu_linear_acceleration+last_imu_data.imu_linear_acceleration) * delta_t * delta_t
+        # self.pos_ = self.pos_ + 0.5 * delta_t * (curr_vel + last_vel) + 0.25 * (unbias_accel_0 + unbias_accel_1) * delta_t * delta_t
+        
 
         self.UpdateErrorState(delta_t, curr_accel)
 
@@ -161,23 +164,20 @@ class ESKF(object):
         Fk = np.eye(DIM_STATE) + self.F * delta_t
         Bk = self.B * delta_t
 
+        # 用于可观测性分析
+        self.Fo = self.F * delta_t
+
         self.X = Fk @ self.X
         self.P = Fk @ self.P @ Fk.T + Bk @ self.Q @ Bk.T
 
     def Correct(self):
-        if self.curr_gnss_data.gnss_time > self.last_imu_data.imu_time:
-            return
-        else:
-            self.Y = lla2ned(self.curr_gnss_data.position_lla,self.ref_pos_lla) - self.pos_
-            self.K = self.P @ self.G.T @ np.linalg.inv(self.G @ self.P @ self.G.T + self.C @ self.R @ self.C.T)
-            self.P = (np.eye(DIM_STATE) - self.K @ self.G) @ self.P
-            self.X = self.X + self.K @ (self.Y - self.G @ self.X)
-            self.EliminateError()
-            self.ResetState()
-            if not self.gnss_data_queue.empty():
-                self.curr_gnss_data = self.gnss_data_queue.get()
-            else:
-                print('GNSS data is empty')
+            
+        self.Y = lla2ned(self.curr_gnss_data.position_lla, self.ref_pos_lla) - self.pos_
+        self.K = self.P @ self.G.T @ np.linalg.inv(self.G @ self.P @ self.G.T + self.C @ self.R @ self.C.T)
+        self.P = (np.eye(DIM_STATE) - self.K @ self.G) @ self.P
+        self.X = self.X + self.K @ (self.Y - self.G @ self.X)
+        self.EliminateError()
+        self.ResetState()
 
     def EliminateError(self):
         self.pos_ = self.pos_ + self.X[INDEX_STATE_POSI:INDEX_STATE_VEL, :]
@@ -217,17 +217,21 @@ class ESKF(object):
                 f.write(str(gt_pos_ned[i][0])+' ')
             for i in range(4):
                 if i < 3:
-                    f.write(str(eskf.quat_[i])+' ')
+                    f.write(str(self.last_imu_data.gt_quat[i])+' ')
                 else:
-                    f.write(str(eskf.quat_[i])+'\n')
+                    f.write(str(self.last_imu_data.gt_quat[i])+'\n')
         
 if __name__ == "__main__":
     data_path = './data/raw_data'
+    is_obs_analysis = True
+    if is_obs_analysis:
+        OA = ObservabilityAnalysis(15)
     # load configuration
     config_path = os.path.join(data_path,'config4raw.yaml')
     with open(config_path,encoding='utf-8') as config_file:
         config = yaml.load(config_file,Loader=yaml.FullLoader)
         print(config)
+    
 
     fuse_file = os.path.join(data_path,'fused.txt')
     gps_file = os.path.join(data_path,'gps_measurement.txt')
@@ -255,16 +259,30 @@ if __name__ == "__main__":
     eskf.Init(data_path)
     while((not eskf.imu_data_queue.empty()) and (not eskf.gnss_data_queue.empty())):
         eskf.Predict()
+        eskf.last_imu_data = eskf.curr_imu_data
+        eskf.curr_imu_data = eskf.imu_data_queue.get()
         if eskf.curr_gnss_data.gnss_time <= eskf.last_imu_data.imu_time:
             eskf.Correct()
+            if not eskf.gnss_data_queue.empty():
+                eskf.curr_gnss_data = eskf.gnss_data_queue.get()
+            else:
+                print('GNSS data is empty')
             eskf.SaveGnssData(gps_file)
             eskf.SaveData(fuse_file)
             eskf.SaveGTData(gt_file)   
 
+        if is_obs_analysis:
+            OA.SaveFGY(eskf.Fo,eskf.G,eskf.Y,eskf.curr_gnss_data.gnss_time)
+            # print(eskf.Fo, eskf.Y, eskf.curr_gnss_data.gnss_time)
+            pass
+
+    if is_obs_analysis:
+        OA.ComputeSOM()
+        OA.ComputeObservability()
+
     # display
     display = True
     if display:
-
         fig = plt.figure()
         ax = plt.axes(projection='3d')
         ax.set_title('compare path')

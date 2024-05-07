@@ -8,8 +8,8 @@ from tools import *
 from earth import lla2ned, ned2lla
 data_path = './KF-GINS/dataset'
 #  names=['week', 'seconds', 'lat', 'lon', 'h', 'vn', 've', 'vd', 'roll','pitch','yaw']
-# process truth.nav
 
+# truth.nav 转 gt.txt
 ref_pos_lla = np.array([[30.4447873701], [114.4718632047], [20.899]])
 
 with open(os.path.join(data_path,'truth.nav'), mode='r', encoding='utf-8') as f:
@@ -37,6 +37,7 @@ with open(os.path.join(data_path, 'gt.txt'), 'a') as save_file:
                 save_file.write(str(quat[i]) + '\n')
 
 
+# KF_GINS_Navresult.nav 转 kf_gins.txt
 with open(os.path.join(data_path,'KF_GINS_Navresult.nav'), mode='r', encoding='utf-8') as f:
     lines = f.readlines()
 

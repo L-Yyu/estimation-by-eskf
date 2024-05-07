@@ -26,8 +26,8 @@ init_velocity_std: [1.0e-5, 1.0e-5, 1.0e-5] # [m/s]
 init_rotation_std: [1.0e-5, 1.0e-5, 1.0e-5] # [deg]
 init_bg_std: [ 1, 1, 1 ]          # [deg/h]
 init_ba_std: [ 50, 50, 50 ]       # [mGal]
-init_sg_std: [ 300, 300, 300 ]    # [ppm]
-init_sa_std: [ 300, 300, 300 ]    # [ppm]
+init_sg_std: [ 0, 0, 0 ]    # [ppm]
+init_sa_std: [ 0, 0, 0 ]    # [ppm]
 
 # imu sensor noise
 # mid-accuracy IMU
@@ -35,8 +35,8 @@ arw: [0.25, 0.25, 0.25]          # [deg/sqrt(hr)]
 vrw: [0.03, 0.03, 0.03]          # [m/s/sqrt(hr)]
 bg_std: [3.5, 3.5, 3.5]        # [deg/hr]
 ba_std: [5.0, 5.0, 5.0]     # [mGal]=[1e-5 m/s^2]
-sg_std: [300.0, 300.0, 300.0]  # [ppm]
-sa_std: [300.0, 300.0, 300.0]  # [ppm]
+sg_std: [0, 0, 0]  # [ppm]
+sa_std: [0, 0, 0]  # [ppm]
 corr_time: 0.028                    # [hr]=100s
 
 # kalman measurement process std (uint: m)

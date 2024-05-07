@@ -1,5 +1,6 @@
 import numpy as np
 
+# dX = FX + BW(Q)  Y = GX + CN(R)
 class ObservabilityAnalysis:
     def __init__(self, states_rank):
         self.FGs = []
@@ -12,12 +13,12 @@ class ObservabilityAnalysis:
         rows = 3 * self.dim_state * len(self.FGs)
         cols = self.dim_state
         self.Qso = np.zeros((rows, cols))
-        print(f"{rows} : {cols}")
+        #print(f"{rows} : {cols}")
         
         rows = 3 * self.dim_state * len(self.FGs)
         cols = 1
         self.Ys = np.zeros((rows, cols))
-        print(f"{rows} : {cols}")
+        #print(f"{rows} : {cols}")
         
         Fnn = np.eye(self.dim_state)
         for i in range(len(self.FGs)):
@@ -34,25 +35,35 @@ class ObservabilityAnalysis:
 
     def ComputeObservability(self):
         U, s, VT = np.linalg.svd(self.Qso)
-        
+        V = VT.T
         for i in range(self.dim_state):
+            if s[i] < 1e-6:
+                print(f"Observability: {i}th singular value is too small")
+                # continue
             temp = np.dot(U[:, i].T, self.Ys) / s[i]
-            Xi = temp * VT[i, :]
-            max_index = np.argmax(np.abs(Xi))
-            print(s[i] / s[0], ",", max_index,',',Xi[max_index])
-        
+            Xi = temp * V[:, i]
+            #print(f"Xi: {Xi}")
+            # 计算状态向量估计的绝对值并找出最大值及其位置,Xi的第几个值最大，则第几个状态量对应第i个奇异值
+            Xi_abs = np.abs(Xi)
+            max_value = np.max(Xi_abs)
+            max_index = np.argmax(Xi_abs)
+            # 输出奇异值比率 和 状态向量估计的最大值位置
+            print(f"Singular value: {s[i]}, singular value ratio: {s[i] / s[0]}, value index: {max_index}")
         return True
 
     def SaveFGY(self, F, G, Y, time):
         FGSize = 10
         time_interval = 100
-
+        # print(f"SaveFGY: {time}")
+        if len(self.FGs) >= FGSize:
+            # 如果 FG 足够多
+            # print('FGs is full, time:{time}')
+            return True
+        
         if not self.FGs:
             # 如果FGs为空，直接添加
             fg = {'time': time, 'F': F - np.eye(self.dim_state), 'G': G, 'Y': [Y]}
             self.FGs.append(fg)
-        elif len(self.FGs) >= FGSize:
-            # 如果FGs足够多
             return True
         else:
             if len(self.FGs[-1]['Y']) == self.dim_state:
@@ -70,3 +81,10 @@ class ObservabilityAnalysis:
     def Check(self):
         if len(self.FGs[-1]['Y']) < self.dim_state:
             self.FGs.pop()
+
+if __name__ == "__main__":
+    A = np.array([[1, 0], [0, 0]])
+    U, s, VT = np.linalg.svd(A)
+    V = VT.T
+    for i in range(2):
+        print(s[i])

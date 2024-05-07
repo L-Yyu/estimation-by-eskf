@@ -61,3 +61,7 @@ only_prediction: false
 
 # consider earth rotation
 is_earth_rotation: true
+
+# duration
+start_time: 456300 # 大约从456360s时开始运动
+end_time: 457300 # 459664 全程 456900 1圈

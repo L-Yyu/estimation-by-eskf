@@ -25,7 +25,7 @@ D2R = np.pi/180
 
 class ESKF(object):
     def __init__(self, config, states_rank, noise_rank) -> None:
-        # 15 6  15 12  21 18
+        # 15 6  15 12   21 6 21 18
         self.dim_state = states_rank        #   15:p v phi bg ba    21:p v phi bg ba sg sa
         self.dim_state_noise = noise_rank   #   6:w_phi w_v     12: w_phi w_v bg ba     18: w_phi w_v bg ba sg sa
         self.dim_measurement = 3
@@ -80,6 +80,9 @@ class ESKF(object):
             self.Q[3:6, 3:6] = np.eye(3) * vrw * vrw
             self.Q[6:9, 6:9] = np.eye(3) * bg_std * bg_std* 2 / corr_time
             self.Q[9:12, 9:12] = np.eye(3) * ba_std * ba_std* 2 / corr_time
+        elif self.dim_state==21 and self.dim_state_noise == 6:
+            self.Q[0:3, 0:3] = np.eye(3) * arw * arw
+            self.Q[3:6, 3:6] = np.eye(3) * vrw * vrw
         elif self.dim_state==21 and self.dim_state_noise == 18:
             self.Q[0:3, 0:3] = np.eye(3) * arw * arw
             self.Q[3:6, 3:6] = np.eye(3) * vrw * vrw
@@ -211,14 +214,6 @@ class ESKF(object):
             self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_33
             self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_BA:ID_STATE_BA+3] = self.rotation_matrix_
             self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_BG:ID_STATE_BG+3] = -self.rotation_matrix_
-        elif self.dim_state == 21 and self.dim_state_noise == 6:
-            self.F[ID_STATE_P:ID_STATE_P+3, ID_STATE_V:ID_STATE_V+3] = np.eye(3)
-            self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_23
-            self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_33
-            self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_BA:ID_STATE_BA+3] = self.rotation_matrix_
-            self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_BG:ID_STATE_BG+3] = -self.rotation_matrix_
-            self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_SA:ID_STATE_SA+3] = self.rotation_matrix_ @ np.diag(accel_b.reshape(3))
-            self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_SG:ID_STATE_SG+3] = -self.rotation_matrix_ @ np.diag(w_ib_b.reshape(3))
         elif self.dim_state == 15 and self.dim_state_noise == 12:
             self.F[ID_STATE_P:ID_STATE_P+3, ID_STATE_V:ID_STATE_V+3] = np.eye(3)
             self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_23
@@ -227,6 +222,14 @@ class ESKF(object):
             self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_BG:ID_STATE_BG+3] = -self.rotation_matrix_
             self.F[ID_STATE_BG:ID_STATE_BG+3, ID_STATE_BG:ID_STATE_BG+3] = (-1/self.corr_time_)*np.eye(3)
             self.F[ID_STATE_BA:ID_STATE_BA+3, ID_STATE_BA:ID_STATE_BA+3] = (-1/self.corr_time_)*np.eye(3)
+        elif self.dim_state == 21 and self.dim_state_noise == 6:
+            self.F[ID_STATE_P:ID_STATE_P+3, ID_STATE_V:ID_STATE_V+3] = np.eye(3)
+            self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_23
+            self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_33
+            self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_BA:ID_STATE_BA+3] = self.rotation_matrix_
+            self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_BG:ID_STATE_BG+3] = -self.rotation_matrix_
+            self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_SA:ID_STATE_SA+3] = self.rotation_matrix_ @ np.diag(accel_b.reshape(3))
+            self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_SG:ID_STATE_SG+3] = -self.rotation_matrix_ @ np.diag(w_ib_b.reshape(3))
         elif self.dim_state == 21 and self.dim_state_noise == 18:
             self.F[ID_STATE_P:ID_STATE_P+3, ID_STATE_V:ID_STATE_V+3] = np.eye(3)
             self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_23
@@ -260,14 +263,18 @@ class ESKF(object):
             self.B[ID_STATE_SA:ID_STATE_SA+3, 15:18] = np.eye(3)
 
         # 离散化1
-        # Phi = np.eye(self.dim_state) + self.F * delta_t
-        # Bk = self.B * delta_t
-        # Qd = Bk @ self.Q @ Bk.T
+        #Phi = np.eye(self.dim_state) + self.F * delta_t
+        #Bk = self.B * delta_t
+        #Qd = Bk @ self.Q @ Bk.T
+        # 用于可观测性分析
+        # self.Fo = self.F * delta_t
         
         # 离散化2
         Phi = np.eye(self.dim_state) + self.F * delta_t
         Qd = self.B @ self.Q @ self.B.T
         Qd = (Phi @ Qd @ Phi.T + Qd) * delta_t / 2
+        # 用于可观测性分析
+        self.Fo = Phi
 
         # KF prediction
         self.X = Phi @ self.X
@@ -295,7 +302,8 @@ class ESKF(object):
     def StateFeedback(self):
         self.pos_ = self.pos_ - self.X[ID_STATE_P:ID_STATE_P+3, :]
         self.velocity_ = self.velocity_ - self.X[ID_STATE_V:ID_STATE_V+3, :]
-        self.rotation_matrix_ = self.rotation_matrix_ @ rv2rm(self.X[ID_STATE_PHI:ID_STATE_PHI+3, :])
+        cp_n = rv2rm(self.X[ID_STATE_PHI:ID_STATE_PHI+3, :])
+        self.rotation_matrix_ = cp_n @ self.rotation_matrix_
         self.gyro_bias_ = self.gyro_bias_ + self.X[ID_STATE_BG:ID_STATE_BG+3, :]
         self.accel_bias_ = self.accel_bias_ + self.X[ID_STATE_BA:ID_STATE_BA+3, :]
         if self.dim_state == 21:
@@ -352,13 +360,13 @@ if __name__ == "__main__":
     tick_start = time.time()
     eskf = ESKF(config, states_rank, noise_rank)
 
-    imu_data_queue = IMUData.read_imu_data(os.path.join(data_path,'Leador-A15.txt'))
+    imu_data_queue = IMUData.read_imu_data(os.path.join(data_path,'imu.txt'))
     gnss_data_queue = GNSSData.read_gnss_data(os.path.join(data_path,'GNSS-RTK.txt'))
     curr_imu_data = imu_data_queue.get()
     curr_gnss_data = gnss_data_queue.get()
 
     start_time = 456300 # 大约从456360s时开始运动
-    end_time = 456800 # 459664
+    end_time = 457300 # 459664 456900
     gt_start_index = 0  # 用于显示对比
     while(curr_imu_data.imu_time < start_time):
         curr_imu_data = imu_data_queue.get()
@@ -402,7 +410,7 @@ if __name__ == "__main__":
         eskf.SaveData(fuse_file, curr_imu_data)
 
         if is_obs_analysis:
-            OA.SaveFGY(eskf.F, eskf.G, eskf.Y, curr_gnss_data.gnss_time)
+            OA.SaveFGY(eskf.Fo, eskf.G, eskf.Y, curr_gnss_data.gnss_time)
     
     if is_obs_analysis:
         OA.ComputeSOM()

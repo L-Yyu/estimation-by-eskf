@@ -50,11 +50,15 @@ class ESKF(object):
         self.SetQ(config['arw'], config['vrw'], config['bg_std'], config['ba_std'], config['sg_std'], config['sa_std'], config['corr_time'])
         # 初始化gnss观测噪声方差
         self.SetR(config['gps_position_x_std'], config['gps_position_y_std'], config['gps_position_z_std'])
+        # 自适应更新R的参数
+        self.beta = 1
+        self.b = 0.99
 
         # 初始化部分参数
         self.corr_time_ = config['corr_time']
         self.ref_pos_lla_ = np.array(config['init_position_lla']).reshape(3,1)
         self.g_n = np.array([0, 0, GetGravity(self.ref_pos_lla_)]).reshape((3,1))
+
         
         # 初始化状态
         self.InitState(config)
@@ -81,6 +85,9 @@ class ESKF(object):
             self.Q[3:6, 3:6] = np.eye(3) * vrw * vrw
             self.Q[6:9, 6:9] = np.eye(3) * bg_std * bg_std* 2 / corr_time
             self.Q[9:12, 9:12] = np.eye(3) * ba_std * ba_std* 2 / corr_time
+        elif self.dim_state==21 and self.dim_state_noise == 6:
+            self.Q[0:3, 0:3] = np.eye(3) * arw * arw
+            self.Q[3:6, 3:6] = np.eye(3) * vrw * vrw
         elif self.dim_state==21 and self.dim_state_noise == 18:
             self.Q[0:3, 0:3] = np.eye(3) * arw * arw
             self.Q[3:6, 3:6] = np.eye(3) * vrw * vrw
@@ -151,11 +158,14 @@ class ESKF(object):
         delta_t = curr_imu_data.imu_time - last_imu_data.imu_time
         # 根据上一时刻状态，计算状态转移矩阵F_k-1, B_k-1
         self.UpdateErrorState(delta_t, last_imu_data)
+
         # 姿态更新
+         # gyro数据补偿
         unbias_gyro_0 = last_imu_data.imu_angle_vel - self.gyro_bias_   #[deg/s]
         unbias_gyro_1 = curr_imu_data.imu_angle_vel - self.gyro_bias_
         if self.dim_state == 21:
-            pass
+            unbias_gyro_0 = (np.ones((3,1)) + self.gyro_scale_)*unbias_gyro_0
+            unbias_gyro_1 = (np.ones((3,1)) + self.gyro_scale_)*unbias_gyro_1
         delta_theta = 0.5 * (unbias_gyro_0 + unbias_gyro_1) * delta_t
         rotation_vector = delta_theta
         # 基于旋转矩阵的更新算法
@@ -164,11 +174,6 @@ class ESKF(object):
         curr_rotation_matrix = last_rotation_matrix @ delta_rotation_matrix
         self.rotation_matrix_ = curr_rotation_matrix
         self.quat_ = rm2quaternion(curr_rotation_matrix)
-    
-        # 基于四元数的更新算法
-        # delta_quat = rv2quaternion(delta_theta)
-        # last_quat = quat_
-        # curr_quat = last_quat
 
         # 速度更新
         unbias_accel_n_0 = last_rotation_matrix @ (last_imu_data.imu_linear_acceleration - self.accel_bias_) + self.g_n
@@ -178,7 +183,8 @@ class ESKF(object):
         last_vel_n = self.velocity_
         curr_vel_n = last_vel_n + delta_t * 0.5 * (unbias_accel_n_0 + unbias_accel_n_1)
         self.velocity_ = curr_vel_n
-
+        # print('vb',self.rotation_matrix_.T@self.velocity_)
+        # print('vb_measure',euler2rm(curr_imu_data.true_euler).T @ curr_imu_data.true_vel_n)
         # 位置更新
         self.pos_ = self.pos_ + 0.5 * delta_t * (curr_vel_n + last_vel_n) + 0.25 * (unbias_accel_n_0 + unbias_accel_n_1) * delta_t * delta_t
         self.pos_lla_ = ned2lla(self.pos_, self.ref_pos_lla_)
@@ -191,7 +197,7 @@ class ESKF(object):
             print('rm: ', self.quat_)
         
         # self.CorrectOdom(curr_imu_data)
-        # self.CorrectVb(curr_imu_data)
+        # self.CorrectVb1(curr_imu_data)
 
 
     def UpdateErrorState(self, delta_t, imu_data):
@@ -210,14 +216,6 @@ class ESKF(object):
             self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_33
             self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_BA:ID_STATE_BA+3] = self.rotation_matrix_
             self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_BG:ID_STATE_BG+3] = -self.rotation_matrix_
-        elif self.dim_state == 21 and self.dim_state_noise == 6:
-            self.F[ID_STATE_P:ID_STATE_P+3, ID_STATE_V:ID_STATE_V+3] = np.eye(3)
-            self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_23
-            self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_33
-            self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_BA:ID_STATE_BA+3] = self.rotation_matrix_
-            self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_BG:ID_STATE_BG+3] = -self.rotation_matrix_
-            self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_SA:ID_STATE_SA+3] = self.rotation_matrix_ @ np.diag(accel_b.reshape(3))
-            self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_SG:ID_STATE_SG+3] = -self.rotation_matrix_ @ np.diag(w_ib_b.reshape(3))
         elif self.dim_state == 15 and self.dim_state_noise == 12:
             self.F[ID_STATE_P:ID_STATE_P+3, ID_STATE_V:ID_STATE_V+3] = np.eye(3)
             self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_23
@@ -226,6 +224,14 @@ class ESKF(object):
             self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_BG:ID_STATE_BG+3] = -self.rotation_matrix_
             self.F[ID_STATE_BG:ID_STATE_BG+3, ID_STATE_BG:ID_STATE_BG+3] = (-1/self.corr_time_)*np.eye(3)
             self.F[ID_STATE_BA:ID_STATE_BA+3, ID_STATE_BA:ID_STATE_BA+3] = (-1/self.corr_time_)*np.eye(3)
+        elif self.dim_state == 21 and self.dim_state_noise == 6:
+            self.F[ID_STATE_P:ID_STATE_P+3, ID_STATE_V:ID_STATE_V+3] = np.eye(3)
+            self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_23
+            self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_33
+            self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_BA:ID_STATE_BA+3] = self.rotation_matrix_
+            self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_BG:ID_STATE_BG+3] = -self.rotation_matrix_
+            self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_SA:ID_STATE_SA+3] = self.rotation_matrix_ @ np.diag(accel_b.reshape(3))
+            self.F[ID_STATE_PHI:ID_STATE_PHI+3, ID_STATE_SG:ID_STATE_SG+3] = -self.rotation_matrix_ @ np.diag(w_ib_b.reshape(3))
         elif self.dim_state == 21 and self.dim_state_noise == 18:
             self.F[ID_STATE_P:ID_STATE_P+3, ID_STATE_V:ID_STATE_V+3] = np.eye(3)
             self.F[ID_STATE_V:ID_STATE_V+3, ID_STATE_PHI:ID_STATE_PHI+3] = F_23
@@ -258,94 +264,38 @@ class ESKF(object):
             self.B[ID_STATE_SG:ID_STATE_SG+3, 12:15] = np.eye(3)
             self.B[ID_STATE_SA:ID_STATE_SA+3, 15:18] = np.eye(3)
 
-        # 离散化1
-        Phi = np.eye(self.dim_state) + self.F * delta_t
-        Bk = self.B * delta_t
-        Qd = Bk @ self.Q @ Bk.T
+        # 离散化1 (已有数据在此方式下计算)
+        #Phi = np.eye(self.dim_state) + self.F * delta_t
+        #Bk = self.B * delta_t
+        #Qd = Bk @ self.Q @ Bk.T
+        # 用于可观测性分析
+        # self.Fo = self.F * delta_t
         
         # 离散化2
-        #Phi = np.eye(self.dim_state) + self.F * delta_t
-        #Qd = self.B @ self.Q @ self.B.T
-        #Qd = (Phi @ Qd @ Phi.T + Qd) * delta_t / 2
+        Phi = np.eye(self.dim_state) + self.F * delta_t
+        Qd = self.B @ self.Q @ self.B.T
+        Qd = (Phi @ Qd @ Phi.T + Qd) * delta_t / 2
+        # 用于可观测性分析
+        self.Fo = Phi
 
         # KF prediction
-        self.X = Phi @ self.X
-        self.P = Phi @ self.P @ Phi.T + Qd
+        self.X = Phi @ self.X   # 1.估计状态
+        self.P = Phi @ self.P @ Phi.T + Qd  # 2.估计协方差矩阵
 
 
     def Correct(self, curr_gnss_data):
         self.G[ID_MEASUREMENT_P:ID_MEASUREMENT_P+3, ID_STATE_P:ID_STATE_P+3] = np.eye(3)
 
-        self.Y = self.pos_ - lla2ned(curr_gnss_data.position_lla, self.ref_pos_lla_)
-        self.K = self.P @ self.G.T @ np.linalg.inv(self.G @ self.P @ self.G.T + self.C @ self.R @ self.C.T)
-        self.P = (np.eye(self.dim_state) - self.K @ self.G) @ self.P
-        self.X = self.X + self.K @ (self.Y - self.G @ self.X)
+        self.beta = self.beta/(self.beta+self.b)
+        res = self.Y - self.G @ self.X # 状态估计残差
+        self.R = (1-self.beta) * self.R + self.beta * (res @ res.T-self.G @ self.P @ self.G.T) # 误差协方差矩阵
+
+        self.Y = self.pos_ - lla2ned(curr_gnss_data.position_lla, self.ref_pos_lla_)    # 观测量
+        self.K = self.P @ self.G.T @ np.linalg.inv(self.G @ self.P @ self.G.T + self.C @ self.R @ self.C.T) # 3.kalman增益 
+        self.X = self.X + self.K @ (self.Y - self.G @ self.X)   # 4.更新状态
+        self.P = (np.eye(self.dim_state) - self.K @ self.G) @ self.P # 5.更新协方差矩阵
         
         # 误差状态反馈至完整状态
-        self.StateFeedback()
-        self.pos_lla_ = ned2lla(self.pos_, self.ref_pos_lla_)
-
-        # 误差状态置零
-        self.ResetState()
-
-        # self.CorrectVn(curr_gnss_data)
-    
-    def CorrectOdom(self, curr_imu_data):
-        self.G1 = np.zeros((3, self.dim_state))
-        self.G1[0:3, ID_STATE_V:ID_STATE_V+3] = np.eye(3)
-        self.C1 = np.identity(3)
-        self.R1 = np.zeros((3,3))
-        self.R1[0,0] = 0.1 * 0.1
-        self.R1[1,1] = 10
-        self.R1[2,2] = 0.1
-
-        vel_odom_b = np.array([curr_imu_data.odom_vel, 0, 0]).reshape(3,1)
-        vel_odom_n = self.rotation_matrix_ @  vel_odom_b
-        self.Y1 = vel_odom_n - self.velocity_ 
-        self.K1 = self.P @ self.G1.T @ np.linalg.inv(self.G1 @ self.P @ self.G1.T + self.C1 @ self.R1 @ self.C1.T)
-        self.P = (np.eye(self.dim_state) - self.K1 @ self.G1) @ self.P
-        self.X = self.X + self.K1 @ (self.Y1 - self.G1 @ self.X)
-        
-        self.StateFeedback()
-        self.pos_lla_ = ned2lla(self.pos_, self.ref_pos_lla_)
-
-        # 误差状态置零
-        self.ResetState()
-
-    def CorrectVn(self, curr_gnss_data):
-        self.G1 = np.zeros((3, self.dim_state))
-        self.G1[0:3, ID_STATE_V:ID_STATE_V+3] = np.eye(3)
-        self.C1 = np.identity(3)
-        self.R1 = np.zeros((3,3))
-        self.R1[0,0] = 0.1 * 0.1
-        self.R1[1,1] = 0.01
-        self.R1[2,2] = 0.01
-
-        self.Y1 = curr_gnss_data.true_velocity - self.velocity_ 
-        self.K1 = self.P @ self.G1.T @ np.linalg.inv(self.G1 @ self.P @ self.G1.T + self.C1 @ self.R1 @ self.C1.T)
-        self.P = (np.eye(self.dim_state) - self.K1 @ self.G1) @ self.P
-        self.X = self.X + self.K1 @ (self.Y1 - self.G1 @ self.X)
-        
-        self.StateFeedback()
-        self.pos_lla_ = ned2lla(self.pos_, self.ref_pos_lla_)
-
-        # 误差状态置零
-        self.ResetState()
-
-    def CorrectVb(self, curr_imu_data):
-        self.G1 = np.zeros((3, self.dim_state))
-        self.G1[0:3, ID_STATE_V:ID_STATE_V+3] = np.eye(3)
-        self.C1 = np.identity(3)
-        self.R1 = np.zeros((3,3))
-        self.R1[0,0] = 0.1 * 0.1
-        self.R1[1,1] = 0.01
-        self.R1[2,2] = 0.01
-
-        self.Y1 = self.rotation_matrix_ @ curr_imu_data.true_vel - self.velocity_ 
-        self.K1 = self.P @ self.G1.T @ np.linalg.inv(self.G1 @ self.P @ self.G1.T + self.C1 @ self.R1 @ self.C1.T)
-        self.P = (np.eye(self.dim_state) - self.K1 @ self.G1) @ self.P
-        self.X = self.X + self.K1 @ (self.Y1 - self.G1 @ self.X)
-        
         self.StateFeedback()
         self.pos_lla_ = ned2lla(self.pos_, self.ref_pos_lla_)
 
@@ -355,7 +305,8 @@ class ESKF(object):
     def StateFeedback(self):
         self.pos_ = self.pos_ - self.X[ID_STATE_P:ID_STATE_P+3, :]
         self.velocity_ = self.velocity_ - self.X[ID_STATE_V:ID_STATE_V+3, :]
-        self.rotation_matrix_ = rv2rm(self.X[ID_STATE_PHI:ID_STATE_PHI+3, :]) @ self.rotation_matrix_
+        cp_n = rv2rm(self.X[ID_STATE_PHI:ID_STATE_PHI+3, :])
+        self.rotation_matrix_ = cp_n @ self.rotation_matrix_
         self.quat_ = rm2quaternion(self.rotation_matrix_)
         self.gyro_bias_ = self.gyro_bias_ + self.X[ID_STATE_BG:ID_STATE_BG+3, :]
         self.accel_bias_ = self.accel_bias_ + self.X[ID_STATE_BA:ID_STATE_BA+3, :]
@@ -363,9 +314,12 @@ class ESKF(object):
             self.gyro_scale_ = self.gyro_scale_ + self.X[ID_STATE_SG:ID_STATE_SG+3, :]
             self.accel_scale_ = self.accel_scale_ + self.X[ID_STATE_SA:ID_STATE_SA+3, :]
         # self.g_ = np.array([0, 0, -GetGravity(self.pos_lla_)]).reshape((3,1))
-
+    
     def ResetState(self):
         self.X = np.zeros((self.dim_state, 1))
+    
+    def UpdateR(self):
+        pass
 
     def SaveData(self, file, imu_data):
         file.write(str(imu_data.imu_time)+' ')
@@ -391,15 +345,17 @@ class ESKF(object):
             file.write(str(gt_pos_ned[i][0])+' ')
         for i in range(4):
             if i < 3:
-                file.write(str(eskf.quat_[i])+' ')
+                file.write(str(imu_data.gt_quat[i])+' ')
             else:
-                file.write(str(eskf.quat_[i])+'\n')
+                file.write(str(imu_data.gt_quat[i])+'\n')
         
 if __name__ == "__main__":
     data_path = './data/sim_1'
-    states_rank = 15
+    # 对于sim 21 6 = 15 6  21 18 = 15 12 
+    states_rank = 21
     noise_rank = 6
-    is_obs_analysis = False
+    print('states_rank: {}, noise_rank: {}'.format(states_rank, noise_rank))
+    is_obs_analysis = True
     if is_obs_analysis:
         OA = ObservabilityAnalysis(states_rank)
     # load configuration
@@ -412,7 +368,7 @@ if __name__ == "__main__":
     fuse_file_name = os.path.join(data_path,'fused.txt')
     gps_file_name = os.path.join(data_path,'gps_measurement.txt')
     gt_file_name = os.path.join(data_path,'gt.txt')
-    ins_file_name = os.path.join(data_path,'ins.txt')
+    # ins_file_name = os.path.join(data_path,'ins.txt')
     
     fuse_file = open(fuse_file_name,'w')
     gps_file = open(gps_file_name,'w')
@@ -464,13 +420,14 @@ if __name__ == "__main__":
 
         eskf.SaveData(fuse_file, curr_imu_data)
         eskf.SaveGTData(gt_file, curr_imu_data)
-
         if is_obs_analysis:
-            OA.SaveFGY(eskf.F, eskf.G, eskf.Y, curr_gnss_data.gnss_time)
+            OA.SaveFGY(eskf.Fo, eskf.G, eskf.Y, curr_gnss_data.gnss_time)
 
     if is_obs_analysis:
         OA.ComputeSOM()
         OA.ComputeObservability()
+    print(eskf.velocity_.T)
+    print(curr_imu_data.true_vel_n.T)
 
     end_time = curr_imu_data.imu_time
     tick_end = time.time()
@@ -481,11 +438,9 @@ if __name__ == "__main__":
     print('fuse finished: {} imu data in {} seconds'.format(data_size, end_time-start_time))
     print('time cost: {:.2f} s'.format(tick_end-tick_start))
 
-    
     # display
     display = True
     if display:
-
         fig = plt.figure()
         ax = plt.axes(projection='3d')
         ax.set_title('compare path')
@@ -498,8 +453,8 @@ if __name__ == "__main__":
         if os.path.exists(gt_file_name):
             gt_data = np.loadtxt(gt_file_name)
             ax.plot3D(gt_data[:, 1], gt_data[:, 2], gt_data[:, 3], color='b', label='ground_truth')
-        if os.path.exists(ins_file_name):
-            ins_data = np.loadtxt(ins_file_name)
+        #if os.path.exists(ins_file_name):
+            #ins_data = np.loadtxt(ins_file_name)
             # ax.plot3D(ins_data[:, 1], ins_data[:, 2], ins_data[:, 3], color='y', label='ins')
         plt.legend(loc='best')
         plt.show()
