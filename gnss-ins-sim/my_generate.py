@@ -12,7 +12,7 @@ from gnss_ins_sim.sim import ins_sim
 D2R = math.pi/180
 
 fs = 100.0          # IMU sample frequency
-fs_gps = 10.0       # GPS sample frequency
+fs_gps = 1     # GPS sample frequency
 fs_mag = fs         # magnetometer sample frequency, not used for now
 
 def test_path_gen():
@@ -54,12 +54,12 @@ def test_path_gen():
            'accel_b_corr': np.array([100.0, 100.0, 100.0]),
            'mag_std': np.array([0.2, 0.2, 0.2]) * 1.0
           }
-    gps_accuracy = {'stdp': np.array([0.01, 0.01, 0.02]),
+    gps_accuracy = {'stdp': np.array([5, 5, 7]),
                     'stdv': np.array([0.05, 0.05, 0.05])}
-    odo_accuracy = {'scale': 0.99,
+    odo_accuracy = {'scale': 1,
                     'stdv': 0.1}
     
-    data_name = 'straight'
+    data_name = 'sim_1'
 
     # generate GPS data
     #imu = imu_model.IMU(accuracy=imu_err, axis=6, gps=True, gps_opt=gps_accuracy, odo_opt=odo_accuracy, odo=True)
@@ -77,7 +77,7 @@ def test_path_gen():
     # save simulation data to files
     sim.results('./data'+'/'+data_name)
     # plot data, 3d plot of reference positoin, 2d plots of gyro and accel
-    sim.plot(['ref_pos','accel', 'gyro', 'gps_visibility'], opt={'ref_pos': '3d'})
+    sim.plot(['ref_pos','accel', 'gyro', 'odo', 'gps', 'gps_visibility'], opt={'ref_pos': '3d'})
 
 if __name__ == '__main__':
     test_path_gen()

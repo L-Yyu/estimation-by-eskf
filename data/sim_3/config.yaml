@@ -40,9 +40,9 @@ sa_std: [300.0, 300.0, 300.0]  # [ppm]
 corr_time: 0.028                    # [hr]=100s
 
 # kalman measurement process std (uint: m)
-gps_position_x_std: 5
-gps_position_y_std: 5
-gps_position_z_std: 7
+gps_position_x_std: 1
+gps_position_y_std: 1
+gps_position_z_std: 1
 
 # only use prediction, equivalent to only using IMU to integration
 only_prediction: false

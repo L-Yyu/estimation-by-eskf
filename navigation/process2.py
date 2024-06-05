@@ -6,12 +6,15 @@ import os
 
 from tools import *
 from earth import lla2ned, ned2lla
-data_path = './awesome-gins-datasets/ICM20602'
+data_path = './awesome-gins-datasets/ADIS16465'
 #  names=['week', 'seconds', 'lat', 'lon', 'h', 'vn', 've', 'vd', 'roll','pitch','yaw']
 
 # truth.nav 转 gt.txt
 # ref_pos_lla = np.array([[30.4447873701], [114.4718632047], [20.899]]) # test
-ref_pos_lla = np.array([[30.4604298544], [114.4725036426], [23.08011]]) # ICM20602
+# ref_pos_lla = np.array([[30.4604298544], [114.4725036426], [23.08011]]) # ICM20602
+# ref_pos_lla = np.array([[30.4604283861], [114.4725033030], [22.77916]]) # i300
+#ref_pos_lla = np.array([[30.4604282594], [114.4725045425], [22.75837]]) # ADIS16460
+ref_pos_lla = np.array([[30.4604298391], [114.4725037978], [23.08001]]) # ADIS16465
 with open(os.path.join(data_path,'truth.nav'), mode='r', encoding='utf-8') as f:
     lines = f.readlines()
 
@@ -37,7 +40,7 @@ with open(os.path.join(data_path, 'gt.txt'), 'a') as save_file:
                 save_file.write(str(quat[i]) + '\n')
 
 
-# truth.nav 转 odom.txt 
+# truth.nav 转 odo.txt 
 with open(os.path.join(data_path,'truth.nav'), mode='r', encoding='utf-8') as f:
     lines = f.readlines()
 

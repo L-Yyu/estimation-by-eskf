@@ -71,4 +71,16 @@ def angle_diff(angle1, angle2):
     return d_angle
 
 if __name__=='__main__':
-    print(euler2quaternion(np.array([0, 0, 0])))
+    print(euler2rm(np.array([1.50689, -0.07204, 278.53459])))
+    print(rm2quaternion(euler2rm(np.array([1.50689, -0.07204, 278.53459]))))
+    print(euler2quaternion(np.array([1.50689, -0.07204, 278.53459])))
+    print(quaternion2euler(euler2quaternion(np.array([1.50689, -0.07204, 278.53459]))))
+    print(rv2rm(np.array([[1], [2], [3]])))
+
+    from scipy.spatial.transform import Rotation
+
+
+# 使用Rotation类从旋转矢量创建旋转矩阵
+    rotation = Rotation.from_rotvec([1,2,3])
+    rotation_matrix = rotation.as_matrix()
+    print(rotation_matrix)

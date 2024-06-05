@@ -6,7 +6,7 @@ Simulation time duration: 200.0 s
 Simulation runs: 1
 
 ------------------------------------------------------------
-Simulation results are saved to ./data/turn
+Simulation results are saved to ./data/sim_3
 The following results are saved:
 	time: sample time
 	ref_pos: true LLA pos in the navigation frame

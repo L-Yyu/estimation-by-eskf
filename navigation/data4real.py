@@ -47,7 +47,7 @@ class GNSSData(object):
             for iter, line in enumerate(tqdm(lines, desc="reading gnss data")):
                 numbers = [float(num) for num in line.split()]
                 time = numbers[0]
-                pos_lla = np.array(numbers[1:4]).reshape(3, 1)
+                pos_lla = np.array(numbers[1:4]).reshape(3, 1)+np.random.normal(0, 0, (3, 1))
                 gnss_std = np.array(numbers[4:7]).reshape(3, 1)
                 gnss_data = GNSSData(time, pos_lla, gnss_std)
                 gnss_data_queue.put(gnss_data)

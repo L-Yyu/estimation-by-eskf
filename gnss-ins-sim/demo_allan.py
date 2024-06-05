@@ -35,7 +35,7 @@ def test_allan():
                'mag_std': np.array([0.2, 0.2, 0.2]) * 1.0
               }
     # do not generate GPS and magnetometer data
-    imu = imu_model.IMU(accuracy=imu_err, axis=6, gps=False)
+    imu = imu_model.IMU(accuracy='mid-accuracy', axis=6, gps=False)
 
     #### Allan analysis algorithm
     from demo_algorithms import allan_analysis

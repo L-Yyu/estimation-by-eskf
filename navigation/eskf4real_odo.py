@@ -5,7 +5,7 @@ import queue
 import os
 import yaml
 from data4real import IMUData, GNSSData, ODOData
-from tools import *
+from tools import euler2rm, euler2quaternion, rm2quaternion, rv2rm, BuildSkewSymmetricMatrix
 from earth import lla2ned, ned2lla, GetGravity, GetWie_n, GetWen_n
 from observability import ObservabilityAnalysis
 from tqdm import tqdm
@@ -62,7 +62,7 @@ class ESKF(object):
         
 
     def SetQ(self, arw, vrw, bg_std, ba_std, sg_std, sa_std, corr_time):
-        # 设置imu误差
+        # 设置imu噪声参数
         # 转换为标准单位
         arw = np.array(arw) * D2R/60.0   # deg/sqrt(h) -> rad/sqrt(s)
         vrw = np.array(vrw) / 60.0  # m/s/sqrt(h) -> m/s/sqrt(s)
@@ -272,8 +272,8 @@ class ESKF(object):
         
         # 离散化2
         Phi = np.eye(self.dim_state) + self.F * delta_t
-        Qd = self.B @ self.Q @ self.B.T
-        Qd = (Phi @ Qd @ Phi.T + Qd) * delta_t / 2
+        Qd = self.B @ self.Q @ self.B.T * delta_t
+        Qd = (Phi @ Qd @ Phi.T + Qd) / 2
         # 用于可观测性分析
         self.Fo = Phi
 
@@ -375,10 +375,11 @@ class ESKF(object):
         file.write('0 0 0 1\n')
         
 if __name__ == "__main__":
-    data_path = './data/test'
+    data_path = './data/i300'
     states_rank = 21
     noise_rank = 18
     is_obs_analysis = False
+    is_odo = False
     if is_obs_analysis:
         OA = ObservabilityAnalysis(states_rank)
     # load configuration
@@ -457,13 +458,14 @@ if __name__ == "__main__":
             eskf.Predict(last_imu_data, curr_imu_data)
 
         # odo 数据200hz，但是整秒处有额外数据。只在整秒处进行矫正
-        if curr_odo_data.odo_time - curr_imu_data.imu_time < 0.001:
-            # print(curr_odo_data.odo_time, curr_imu_data.imu_time)
-            # print('odo correct')
-            # eskf.CorrectVb(curr_odo_data)
-            curr_odo_data = odo_data_queue.get()
-        #elif curr_odo_data.odo_time < curr_imu_data.imu_time:
-        #    curr_odo_data = odo_data_queue.get()
+        if is_odo:
+            if curr_odo_data.odo_time - curr_imu_data.imu_time < 0.001:
+                # print(curr_odo_data.odo_time, curr_imu_data.imu_time)
+                # print('odo correct')
+                eskf.CorrectVb(curr_odo_data)
+                curr_odo_data = odo_data_queue.get()
+            elif curr_odo_data.odo_time < curr_imu_data.imu_time:
+                curr_odo_data = odo_data_queue.get()
 
         eskf.SaveData(fuse_file, curr_imu_data)
 

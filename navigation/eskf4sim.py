@@ -1,15 +1,16 @@
 import numpy as np 
 import pandas as pd
 import matplotlib.pyplot as plt
+import queue
 import os
 import yaml
 import time
 from tqdm import tqdm
-from data import IMUData, GNSSData
+from data4sim import IMUData, GNSSData
 from tools import BuildSkewSymmetricMatrix, rv2rm, rm2quaternion, euler2rm, euler2quaternion, rv2rm
 from earth import lla2ned, ned2lla, GetGravity
 from observability import ObservabilityAnalysis
-
+from display2d import evaluate
 
 ID_STATE_P = 0
 ID_STATE_V = 3
@@ -50,15 +51,11 @@ class ESKF(object):
         self.SetQ(config['arw'], config['vrw'], config['bg_std'], config['ba_std'], config['sg_std'], config['sa_std'], config['corr_time'])
         # 初始化gnss观测噪声方差
         self.SetR(config['gps_position_x_std'], config['gps_position_y_std'], config['gps_position_z_std'])
-        # 自适应更新R的参数
-        self.beta = 1
-        self.b = 0.99
 
         # 初始化部分参数
         self.corr_time_ = config['corr_time']
         self.ref_pos_lla_ = np.array(config['init_position_lla']).reshape(3,1)
         self.g_n = np.array([0, 0, GetGravity(self.ref_pos_lla_)]).reshape((3,1))
-
         
         # 初始化状态
         self.InitState(config)
@@ -160,15 +157,22 @@ class ESKF(object):
         self.UpdateErrorState(delta_t, last_imu_data)
 
         # 姿态更新
-         # gyro数据补偿
+        # gyro数据补偿
         unbias_gyro_0 = last_imu_data.imu_angle_vel - self.gyro_bias_   #[deg/s]
         unbias_gyro_1 = curr_imu_data.imu_angle_vel - self.gyro_bias_
         if self.dim_state == 21:
             unbias_gyro_0 = (np.ones((3,1)) + self.gyro_scale_)*unbias_gyro_0
             unbias_gyro_1 = (np.ones((3,1)) + self.gyro_scale_)*unbias_gyro_1
+        # acc数据补偿
+        unbias_accel_0 = last_imu_data.imu_linear_acceleration - self.accel_bias_  
+        unbias_accel_1 = curr_imu_data.imu_linear_acceleration - self.accel_bias_
+        if self.dim_state == 21:
+            unbias_accel_0 = (np.ones((3,1)) + self.accel_scale_)*unbias_accel_0
+            unbias_accel_1 = (np.ones((3,1)) + self.accel_scale_)*unbias_accel_1
+        
+        # 基于旋转矩阵的更新算法
         delta_theta = 0.5 * (unbias_gyro_0 + unbias_gyro_1) * delta_t
         rotation_vector = delta_theta
-        # 基于旋转矩阵的更新算法
         last_rotation_matrix = self.rotation_matrix_
         delta_rotation_matrix = rv2rm(rotation_vector)
         curr_rotation_matrix = last_rotation_matrix @ delta_rotation_matrix
@@ -176,10 +180,9 @@ class ESKF(object):
         self.quat_ = rm2quaternion(curr_rotation_matrix)
 
         # 速度更新
-        unbias_accel_n_0 = last_rotation_matrix @ (last_imu_data.imu_linear_acceleration - self.accel_bias_) + self.g_n
-        unbias_accel_n_1 = curr_rotation_matrix @ (curr_imu_data.imu_linear_acceleration - self.accel_bias_) + self.g_n
-        if self.dim_state == 21:
-            pass
+        unbias_accel_n_0 = last_rotation_matrix @ unbias_accel_0 + self.g_n
+        unbias_accel_n_1 = curr_rotation_matrix @ unbias_accel_1 + self.g_n
+
         last_vel_n = self.velocity_
         curr_vel_n = last_vel_n + delta_t * 0.5 * (unbias_accel_n_0 + unbias_accel_n_1)
         self.velocity_ = curr_vel_n
@@ -196,9 +199,6 @@ class ESKF(object):
             print('vel: ', self.velocity_)
             print('rm: ', self.quat_)
         
-        # self.CorrectOdom(curr_imu_data)
-        # self.CorrectVb1(curr_imu_data)
-
 
     def UpdateErrorState(self, delta_t, imu_data):
         accel_b = imu_data.imu_linear_acceleration 
@@ -286,11 +286,7 @@ class ESKF(object):
     def Correct(self, curr_gnss_data):
         self.G[ID_MEASUREMENT_P:ID_MEASUREMENT_P+3, ID_STATE_P:ID_STATE_P+3] = np.eye(3)
 
-        self.beta = self.beta/(self.beta+self.b)
-        res = self.Y - self.G @ self.X # 状态估计残差
-        self.R = (1-self.beta) * self.R + self.beta * (res @ res.T-self.G @ self.P @ self.G.T) # 误差协方差矩阵
-
-        self.Y = self.pos_ - lla2ned(curr_gnss_data.position_lla, self.ref_pos_lla_)    # 观测量
+        self.Y = self.pos_ - lla2ned(curr_gnss_data.position_lla, self.ref_pos_lla_)   # 观测量
         self.K = self.P @ self.G.T @ np.linalg.inv(self.G @ self.P @ self.G.T + self.C @ self.R @ self.C.T) # 3.kalman增益 
         self.X = self.X + self.K @ (self.Y - self.G @ self.X)   # 4.更新状态
         self.P = (np.eye(self.dim_state) - self.K @ self.G) @ self.P # 5.更新协方差矩阵
@@ -350,12 +346,12 @@ class ESKF(object):
                 file.write(str(imu_data.gt_quat[i])+'\n')
         
 if __name__ == "__main__":
-    data_path = './data/sim_1'
-    # 对于sim 21 6 = 15 6  21 18 = 15 12 
+    data_path = './data/sim_2'
+    # 对于sim 21 6 = 15 6  21 18 = 15 12  21 18对比21 6
     states_rank = 21
-    noise_rank = 6
+    noise_rank = 18
     print('states_rank: {}, noise_rank: {}'.format(states_rank, noise_rank))
-    is_obs_analysis = True
+    is_obs_analysis = False
     if is_obs_analysis:
         OA = ObservabilityAnalysis(states_rank)
     # load configuration
@@ -368,7 +364,7 @@ if __name__ == "__main__":
     fuse_file_name = os.path.join(data_path,'fused.txt')
     gps_file_name = os.path.join(data_path,'gps_measurement.txt')
     gt_file_name = os.path.join(data_path,'gt.txt')
-    # ins_file_name = os.path.join(data_path,'ins.txt')
+    ins_file_name = os.path.join(data_path,'ins.txt')
     
     fuse_file = open(fuse_file_name,'w')
     gps_file = open(gps_file_name,'w')
@@ -379,9 +375,14 @@ if __name__ == "__main__":
     tick_start = time.time()
     eskf = ESKF(config, states_rank, noise_rank)
 
-    imu_data_queue = IMUData.read_imu_data(data_path)
-    gnss_data_queue = GNSSData.read_gnss_data(data_path)
+    imu_data_queue = queue.Queue()
+    imu_data_queue = IMUData.read_imu_data(imu_data_queue, data_path)
+
+    gnss_data_queue = queue.Queue()
+    gnss_data_queue = GNSSData.read_gnss_data(gnss_data_queue, data_path)
+
     curr_imu_data = imu_data_queue.get()
+    curr_gnss_data = gnss_data_queue.get()
     curr_gnss_data = gnss_data_queue.get()
 
     start_time = curr_imu_data.imu_time
@@ -394,6 +395,9 @@ if __name__ == "__main__":
         if abs(curr_gnss_data.gnss_time - last_imu_data.imu_time) < 0.001:
             # 靠近上一时刻
             eskf.Correct(curr_gnss_data)
+            if is_obs_analysis:
+                OA.SaveFGY(eskf.Fo, eskf.G, eskf.Y, curr_gnss_data.gnss_time)
+
             eskf.SaveGnssData(gps_file, curr_gnss_data)
             curr_gnss_data = gnss_data_queue.get()
 
@@ -401,16 +405,23 @@ if __name__ == "__main__":
         elif abs(curr_gnss_data.gnss_time - curr_imu_data.imu_time) < 0.001:
             # 靠近当前时刻
             eskf.Predict(last_imu_data, curr_imu_data)
-
             eskf.Correct(curr_gnss_data)
+
+            if is_obs_analysis:
+                OA.SaveFGY(eskf.Fo, eskf.G, eskf.Y, curr_gnss_data.gnss_time)
+
             eskf.SaveGnssData(gps_file, curr_gnss_data)
             curr_gnss_data = gnss_data_queue.get()
         elif (curr_gnss_data.gnss_time > last_imu_data.imu_time) and (curr_gnss_data.gnss_time < curr_imu_data.imu_time):
             # 内插到gnss时刻
+            print('interpolate')
             mid_imu_data = IMUData.Interpolate(last_imu_data, curr_imu_data, curr_gnss_data.gnss_time)
             eskf.Predict(last_imu_data, mid_imu_data)
-
+            
             eskf.Correct(curr_gnss_data)
+            if is_obs_analysis:
+                OA.SaveFGY(eskf.Fo, eskf.G, eskf.Y, curr_gnss_data.gnss_time)
+
             eskf.SaveGnssData(gps_file, curr_gnss_data)
             curr_gnss_data = gnss_data_queue.get()
 
@@ -420,14 +431,15 @@ if __name__ == "__main__":
 
         eskf.SaveData(fuse_file, curr_imu_data)
         eskf.SaveGTData(gt_file, curr_imu_data)
-        if is_obs_analysis:
-            OA.SaveFGY(eskf.Fo, eskf.G, eskf.Y, curr_gnss_data.gnss_time)
+        #print('pos:{}, vel:{}, phi:{}, bg:{}, ba{}, sg{}, sa:{}'
+        #  .format(eskf.pos_.T, eskf.velocity_.T, eskf.quat_.T, eskf.gyro_bias_.T, eskf.accel_bias_.T, eskf.gyro_scale_.T, eskf.accel_scale_.T))
+
+
+    print('v:', eskf.velocity_.T, curr_imu_data.true_vel_n.T)
 
     if is_obs_analysis:
         OA.ComputeSOM()
         OA.ComputeObservability()
-    print(eskf.velocity_.T)
-    print(curr_imu_data.true_vel_n.T)
 
     end_time = curr_imu_data.imu_time
     tick_end = time.time()
@@ -453,8 +465,10 @@ if __name__ == "__main__":
         if os.path.exists(gt_file_name):
             gt_data = np.loadtxt(gt_file_name)
             ax.plot3D(gt_data[:, 1], gt_data[:, 2], gt_data[:, 3], color='b', label='ground_truth')
-        #if os.path.exists(ins_file_name):
-            #ins_data = np.loadtxt(ins_file_name)
-            # ax.plot3D(ins_data[:, 1], ins_data[:, 2], ins_data[:, 3], color='y', label='ins')
+        if os.path.exists(ins_file_name):
+            ins_data = np.loadtxt(ins_file_name)
+            #ax.plot3D(ins_data[:, 1], ins_data[:, 2], ins_data[:, 3], color='y', label='ins')
         plt.legend(loc='best')
         plt.show()
+    
+    evaluate(fuse_data, gt_data)

@@ -332,10 +332,10 @@ class ESKF(object):
         file.write('0 0 0 1\n')
         
 if __name__ == "__main__":
-    data_path = './data/test'
+    data_path = './data/ICM20602'
     states_rank = 21
     noise_rank = 18
-    is_obs_analysis = False
+    is_obs_analysis = True
     if is_obs_analysis:
         OA = ObservabilityAnalysis(states_rank)
     # load configuration
